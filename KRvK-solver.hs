@@ -12,6 +12,7 @@ import Data.Maybe
 import Data.List
 import Data.Ord
 
+-- **Data definitions**
 
 data Piece = BlackKing | WhiteKing | WhiteRook deriving (Show)
 instance Eq Piece where
@@ -43,6 +44,8 @@ type Position = (Int,Int)
 type Square = (Position,Piece)
 type Board = [Square]
 
+-- **Printing**
+
 getPiece :: Board -> (Int, Int) -> String
 getPiece board (x, y) =
     case lookup (x, y) board of
@@ -59,7 +62,7 @@ line board y = concat [getPiece board (x, y) | x <- [1..8]]
 printBoard :: Board -> String
 printBoard board = unlines [line board y | y <- [1..8]] ++ "\n"
 
-
+-- **Player movement**
 
 playerMove :: PlayerMoveInputChars -> Board -> Maybe Board
 playerMove move board =
@@ -91,6 +94,8 @@ checkIfLegal board =
         whiteAttacks = squaresAttackedByWhite whiteKingPos rookPos board
     in not (blackKingPos `elem` whiteAttacks || blackKingPos == whiteKingPos || blackKingPos == rookPos)
        && isValidSquare blackKingPos
+
+-- **Attack calculation**
 
 -- Function to check squares attacked by the white king and white rook
 squaresAttackedByWhite :: Position -> Position -> Board -> [Position]
@@ -135,6 +140,8 @@ squaresAttackedByBlack blackKingPos board =
     filter (`notElem` validKingMoves whiteKingPos) $ validKingMoves blackKingPos
 
 
+-- **Computer movement**
+
 isRookBetweenKings :: Position -> Position -> Position -> Maybe Orientation
 isRookBetweenKings (x1, y1) (x2, y2) (xr, yr)
   | between y1 y2 yr = Just Horizontal
@@ -142,8 +149,6 @@ isRookBetweenKings (x1, y1) (x2, y2) (xr, yr)
   | otherwise = Nothing
   where
     between a b c = (a < c && c < b) || (b < c && c < a)
-
-
 
 -- Main function to determine the computer's move
 computerMove :: Board -> Board
@@ -351,7 +356,7 @@ tryToMoveRookBetweenKings board blackKingPos whiteKingPos rookPos =
 distance :: Position -> Position -> Int
 distance (x1, y1) (x2, y2) = abs (x1 - x2) + abs (y1 - y2)
 
-
+-- **Checkmate check**
 
 -- Check if the black king is in checkmate
 isCheckmated :: Board -> Bool
@@ -384,7 +389,7 @@ blackKingInCheck board  =
 
     in blackKingPos `elem` squaresAttackedByWhite whiteKingPos whiteRookPos board
 
-
+-- **Game loop handling**
 
 playerPrompt :: Board -> IO PlayerMoveInputChars
 playerPrompt board = do
@@ -441,7 +446,7 @@ main = do
     else
         putStrLn "Invalid board!"
 
-
+-- **Initial board validation**
 
 isValidBoard :: Board -> Bool
 isValidBoard board = 
@@ -461,6 +466,8 @@ arePositionsUnique positions = length positions == length (removeDuplicates posi
 areKingsAdjacent :: Position -> Position -> Bool
 areKingsAdjacent (x1, y1) (x2, y2) = abs (x1 - x2) <= 1 && abs (y1 - y2) <= 1
 
+
+-- **Test data**
 
 test1 = gameLoop [((1,1),BlackKing), ((3,3),WhiteKing), ((5,5),WhiteRook)]
 test2 = gameLoop [((3,3),BlackKing), ((5,3),WhiteKing), ((7,3),WhiteRook)]

@@ -11,7 +11,6 @@ import Text.ParserCombinators.ReadPrec (lift)
 import Data.Maybe
 import Data.List
 import Data.Ord
-import Debug.Trace
 
 
 data Piece = BlackKing | WhiteKing | WhiteRook deriving (Show)
@@ -289,14 +288,8 @@ progress board orientation blackKingPos whiteKingPos rookPos =
 
         -- List of spaces for the white king to make an L shape with the black king
         lShape = 
-            [(fst blackKingPos + 2, snd blackKingPos + 1),
-             (fst blackKingPos + 2, snd blackKingPos - 1),
-             (fst blackKingPos - 2, snd blackKingPos + 1),
-             (fst blackKingPos - 2, snd blackKingPos - 1),
-             (fst blackKingPos + 1, snd blackKingPos + 2),
-             (fst blackKingPos + 1, snd blackKingPos - 2),
-             (fst blackKingPos - 1, snd blackKingPos + 2),
-             (fst blackKingPos - 1, snd blackKingPos - 2)]
+            [ (fst blackKingPos + dx, snd blackKingPos + dy) | dx <- [-2, -1, 1, 2], dy <- [-2, -1, 1, 2],
+          abs dx /= abs dy, isValidSquare (fst blackKingPos + dx, snd blackKingPos + dy) ]
 
     in
     case orientation of
@@ -467,3 +460,11 @@ arePositionsUnique positions = length positions == length (removeDuplicates posi
 
 areKingsAdjacent :: Position -> Position -> Bool
 areKingsAdjacent (x1, y1) (x2, y2) = abs (x1 - x2) <= 1 && abs (y1 - y2) <= 1
+
+
+test1 = gameLoop [((1,1),BlackKing), ((3,3),WhiteKing), ((5,5),WhiteRook)]
+test2 = gameLoop [((3,3),BlackKing), ((5,3),WhiteKing), ((7,3),WhiteRook)]
+test3 = gameLoop [((2,3),BlackKing), ((3,5),WhiteKing), ((1,4),WhiteRook)]
+test4 = gameLoop [((1,3),BlackKing), ((2,5),WhiteKing), ((2,7),WhiteRook)]
+test5 = gameLoop [((1,3),BlackKing), ((1,5),WhiteKing), ((2,1),WhiteRook)]
+

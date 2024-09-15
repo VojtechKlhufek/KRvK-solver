@@ -2,6 +2,8 @@
 {-# HLINT ignore "Use first" #-}
 {-# HLINT ignore "Used otherwise as a pattern" #-}
 {-# HLINT ignore "Replace case with fromMaybe" #-}
+{-# HLINT ignore "Use guards" #-}
+{-# HLINT ignore "Redundant if" #-}
 import GHC.Read (Read(readPrec))
 import Text.Read (Read(..), readMaybe)
 import Text.ParserCombinators.ReadP
@@ -9,17 +11,8 @@ import Text.ParserCombinators.ReadPrec (lift)
 import Data.Maybe
 import Data.List
 import Data.Ord
--- udělám klasický postup, který používají lidé při matování věží, jelikož nemůžu použít minmax.. 
--- tento postup má docela jasné algoritmické kroky, takže by to nemuselo být těžké
--- na začátku dám uživateli na výběr pozice všech tří figurek (hráč a počítač můžou mít vždy stejné barvy) 
--- vždycky na začátku bude na tahu počítač (? ve skutečnosti to je asi jedno)
--- hráč ovládá napsáním směru, kterým se chce pohnout
+import Debug.Trace
 
--- alg:
--- 1. věž se pokusí postavit mezi krále, pokud to nejde, pokusí se dát šach, což mu vždycky umožní v dalším tahu to udělat (potřeba dokázat)
--- 2. další postup je, že se snaží oponentova krále dostat ke kraji, takže nejprve dát věž na stranu blíže k vlastnímu králi, 
--- a poté nahánět oponenta dokud nebudou králové v opozici -> šach
--- pokud se oponent posune dozadu, posuneme věž blíže k němu a budeme opakovat 2
 
 data Piece = BlackKing | WhiteKing | WhiteRook deriving (Show)
 instance Eq Piece where
@@ -28,7 +21,7 @@ instance Eq Piece where
   (==) WhiteRook WhiteRook = True
   (==) _ _ = False
 
-data Orientation = Horizontal | Vertical
+data Orientation = Horizontal | Vertical deriving (Eq)
 instance Show Orientation where
     show Vertical   = "Vertical"
     show Horizontal = "Horizontal"
@@ -47,7 +40,7 @@ instance Read PlayerMoveInputChars where
                     string "ul" >> return UL
                   ]
 
-type Position = (Int,Int) 
+type Position = (Int,Int)
 type Square = (Position,Piece)
 type Board = [Square]
 
@@ -66,14 +59,6 @@ line board y = concat [getPiece board (x, y) | x <- [1..8]]
 -- Function to print the entire board
 printBoard :: Board -> String
 printBoard board = unlines [line board y | y <- [1..8]] ++ "\n"
-
-
-
-
-
-
-
-
 
 
 
@@ -115,12 +100,8 @@ squaresAttackedByWhite whiteKingPos rookPos board = validKingMoves whiteKingPos 
 -- Determine valid moves for the rook, ignoring the black king
 validRookMoves :: Board -> Position -> [Position]
 validRookMoves board (x, y) =
-    -- Horizontal moves (left and right)
-    validHorizontalMoves ++
-    -- Vertical moves (up and down)
-    validVerticalMoves
+    validHorizontalMoves ++ validVerticalMoves
   where
-    -- Extract the positions of all pieces on the board
     occupiedSquares = map fst board
 
     -- Filter out the black king from the occupied squares
@@ -137,7 +118,6 @@ validRookMoves board (x, y) =
 
 
 
-
 -- King attacks adjacent squares
 validKingMoves :: Position -> [Position]
 validKingMoves (x, y) = filter isValidSquare [(x + dx, y + dy) | dx <- [-1..1], dy <- [-1..1], (dx, dy) /= (0, 0)]
@@ -148,17 +128,268 @@ isValidSquare (x, y) = x >= 1 && x <= 8 && y >= 1 && y <= 8
 
 
 
+squaresAttackedByBlack :: Position -> Board -> [Position]
+squaresAttackedByBlack blackKingPos board =
+    let
+        whiteKingPos = fst $ head $ filter (\(_, piece) -> piece == WhiteKing) board
+    in
+    filter (`notElem` validKingMoves whiteKingPos) $ validKingMoves blackKingPos
+
+
+isRookBetweenKings :: Position -> Position -> Position -> Maybe Orientation
+isRookBetweenKings (x1, y1) (x2, y2) (xr, yr)
+  | between y1 y2 yr = Just Horizontal
+  | between x1 x2 xr = Just Vertical
+  | otherwise = Nothing
+  where
+    between a b c = (a < c && c < b) || (b < c && c < a)
 
 
 
+-- Main function to determine the computer's move
+computerMove :: Board -> Board
+computerMove board =
+    let
+        whiteRookPos = fst $ head $ filter (\(_, piece) -> piece == WhiteRook) board
+        blackKingPos = fst $ head $ filter (\(_, piece) -> piece == BlackKing) board
+        whiteKingPos = fst $ head $ filter (\(_, piece) -> piece == WhiteKing) board
+
+        rookBetweenKings = isRookBetweenKings blackKingPos whiteKingPos whiteRookPos
+
+        tryBetween = tryToMoveRookBetweenKings board blackKingPos whiteKingPos whiteRookPos
+    in
+        case rookBetweenKings of
+            Just dir -> progress board dir blackKingPos whiteKingPos whiteRookPos
+
+            Nothing ->
+                case tryBetween of
+                    Just newBoard -> newBoard
+                    Nothing -> moveRookAwayFromKing board whiteKingPos whiteRookPos
+
+
+-- Used to make it possible to put the rook between the kings
+moveRookAwayFromKing :: Board -> Position -> Position -> Board
+moveRookAwayFromKing board whiteKingPos whiteRookPos =
+    if fst whiteKingPos == fst whiteRookPos then
+        if fst whiteKingPos > 4 then
+            updateBoardWithMove board (1, snd whiteRookPos)WhiteRook
+        else updateBoardWithMove board (8, snd whiteRookPos) WhiteRook
+    else
+        if snd whiteKingPos > 4 then
+            updateBoardWithMove board (fst whiteRookPos, 1)  WhiteRook
+        else updateBoardWithMove board (fst whiteRookPos, 8) WhiteRook
+
+updateBoardWithMove board move pieceToMove = map (\(pos, piece) -> if piece == pieceToMove then (move, pieceToMove) else (pos, piece)) board
+
+progress :: Board -> Orientation -> Position -> Position -> Position -> Board
+progress board orientation blackKingPos whiteKingPos rookPos =
+    let
+        attackedSquares = squaresAttackedByBlack blackKingPos board
+
+        -- Distance between the rook and the black king on x and y
+        xDistanceRBK = fst blackKingPos - fst rookPos
+        yDistanceRBK = snd blackKingPos - snd rookPos
+
+        possibleRookMoves = validRookMoves board rookPos
+
+        safeMoves = filter (\move -> not $ move `elem` attackedSquares) possibleRookMoves
+
+        targetY = if snd whiteKingPos < snd blackKingPos then 1 else 8
+        targetX = if fst whiteKingPos < fst blackKingPos then 1 else 8
+
+        -- Safe move means a move, that avoids getting the rook captured
+        bestSafeVerticalMove =
+            minimumBy (comparing (\(_, yr) -> abs (yr - targetY)))
+                     $ filter (\(_, yr) -> yr == targetY) safeMoves
+
+        bestSafeHorizontalMove =
+            minimumBy (comparing (\(xr, _) -> abs (xr - targetX)))
+                     $ filter (\(xr, _) -> xr == targetX) safeMoves
+
+        -- Aggressive move means a move, moves closer to the black king
+        bestVerticalAggressiveMove =
+            if xDistanceRBK > 1 then
+                tryMoveRook (fst rookPos + xDistanceRBK - 1, snd rookPos)
+            else if xDistanceRBK < -1 then
+                tryMoveRook (fst rookPos + xDistanceRBK + 1, snd rookPos)
+            else if snd blackKingPos == snd whiteKingPos && abs (fst whiteKingPos - fst blackKingPos) == 2 then
+                if xDistanceRBK > 0 then
+                    tryMoveRook (fst rookPos + 1, snd rookPos)
+                else
+                    tryMoveRook (fst rookPos - 1, snd rookPos)
+            else
+                Nothing
+
+        bestHorizontalAggressiveMove =
+            if yDistanceRBK > 1 then
+                tryMoveRook (fst rookPos, snd rookPos + yDistanceRBK - 1)
+            else if yDistanceRBK < -1 then
+                tryMoveRook (fst rookPos, snd rookPos + yDistanceRBK + 1)
+            else if fst blackKingPos == fst whiteKingPos && abs (snd whiteKingPos - snd blackKingPos) == 2 then
+                if yDistanceRBK > 0 then
+                    tryMoveRook (fst rookPos, snd rookPos + 1)
+                else
+                    tryMoveRook (fst rookPos, snd rookPos - 1)
+            else
+                Nothing
+
+        -- Helper function to attempt the move
+        tryMoveRook :: (Int, Int) -> Maybe (Int, Int)
+        tryMoveRook move =
+            if move `elem` safeMoves
+                then Just move
+                else Nothing
+
+        -- Moves king closer to the desired position
+        kingLMove =
+            case orientation of
+                Vertical -> 
+                    let xDiff = fst whiteKingPos - fst blackKingPos
+                        movesToL = filter (\x -> x `elem` lShape && abs (fst x - fst blackKingPos) > 1) $ validKingMoves whiteKingPos
+                    in
+                    if not $ null movesToL then
+                        head movesToL
+                    else
+                        if abs xDiff == 2 then
+                            if snd blackKingPos > snd whiteKingPos then
+                                (fst whiteKingPos, snd whiteKingPos + 1)
+                            else (fst whiteKingPos, snd whiteKingPos - 1)
+                        else if xDiff > 2 then
+                            (fst whiteKingPos - 1, snd whiteKingPos)
+                        else (fst whiteKingPos + 1, snd whiteKingPos)
+
+
+                Horizontal -> 
+                    let yDiff = snd whiteKingPos - snd blackKingPos
+                        movesToL = filter (\x -> x `elem` lShape && abs (snd x - snd blackKingPos) > 1) $ validKingMoves whiteKingPos
+                    in
+                    if not $ null movesToL then
+                        head movesToL
+                    else
+                        if abs yDiff == 2 then
+                            if fst blackKingPos > fst whiteKingPos then
+                                (fst whiteKingPos + 1, snd whiteKingPos)
+                            else (fst whiteKingPos - 1, snd whiteKingPos)
+                        else if yDiff > 2 then
+                            (fst whiteKingPos, snd whiteKingPos - 1)
+                        else (fst whiteKingPos, snd whiteKingPos + 1)
+
+        -- Makes a waiting rook move that does not affect the position
+        uselessRookMove =
+            case orientation of
+                Vertical ->
+                    case tryMoveRook (fst rookPos, snd rookPos + 1) of
+                        Just move -> Just move
+                        Nothing -> tryMoveRook (fst rookPos, snd rookPos - 1)
+                Horizontal ->
+                    case tryMoveRook (fst rookPos + 1, snd rookPos) of
+                        Just move -> Just move
+                        Nothing -> tryMoveRook (fst rookPos - 1, snd rookPos)
+        areKingsL = whiteKingPos `elem` lShape
+
+        -- List of spaces for the white king to make an L shape with the black king
+        lShape = 
+            [(fst blackKingPos + 2, snd blackKingPos + 1),
+             (fst blackKingPos + 2, snd blackKingPos - 1),
+             (fst blackKingPos - 2, snd blackKingPos + 1),
+             (fst blackKingPos - 2, snd blackKingPos - 1),
+             (fst blackKingPos + 1, snd blackKingPos + 2),
+             (fst blackKingPos + 1, snd blackKingPos - 2),
+             (fst blackKingPos - 1, snd blackKingPos + 2),
+             (fst blackKingPos - 1, snd blackKingPos - 2)]
+
+    in
+    case orientation of
+        Vertical ->
+            if rookPos `elem` attackedSquares then
+                -- Rook is attacked, move toward rank 1 or 8
+                updateBoardWithMove board bestSafeVerticalMove WhiteRook
+            else
+                if (abs xDistanceRBK > 1) || (snd blackKingPos == snd whiteKingPos && (abs (fst whiteKingPos - fst blackKingPos) == 2)) then
+                    case bestVerticalAggressiveMove of
+                        Just move -> updateBoardWithMove board move WhiteRook
+                        Nothing ->
+                            updateBoardWithMove board bestSafeVerticalMove WhiteRook
+                else if areKingsL then
+                                -- Make a useless rook move
+                                case uselessRookMove of
+                                    Just move -> updateBoardWithMove board move WhiteRook
+                                    Nothing -> board
+                            else
+                                -- Move the king toward black king in an L-shape
+                                updateBoardWithMove board kingLMove WhiteKing
+        Horizontal ->
+            if rookPos `elem` attackedSquares then
+                -- Rook is attacked, move toward file 1 or 8
+                updateBoardWithMove board bestSafeHorizontalMove WhiteRook
+            else
+                if (abs yDistanceRBK > 1) || (fst blackKingPos == fst whiteKingPos && (abs (snd whiteKingPos - snd blackKingPos) == 2)) then
+                    case bestHorizontalAggressiveMove of
+                        Just move -> updateBoardWithMove board move WhiteRook
+                        Nothing -> updateBoardWithMove board bestSafeHorizontalMove WhiteRook
+                else 
+                    if areKingsL then
+                        case uselessRookMove of
+                            Just move -> updateBoardWithMove board move WhiteRook
+                            Nothing -> board
+                    else
+                        updateBoardWithMove board kingLMove WhiteKing
+
+
+tryToMoveRookBetweenKings :: Board -> Position -> Position -> Position -> Maybe Board
+tryToMoveRookBetweenKings board blackKingPos whiteKingPos rookPos =
+    let
+        attackedSquares = squaresAttackedByBlack blackKingPos board
+        possibleMoves = validRookMoves board rookPos
+        movesBetween = filter (\move ->
+            case isRookBetweenKings blackKingPos whiteKingPos move of
+                Nothing -> False
+                Just _ -> True) possibleMoves
+        safeMoves = filter (`notElem` attackedSquares) movesBetween
+        closestMove = if not (null safeMoves)
+                        then Just $ minimumBy (comparing $ distance blackKingPos) safeMoves
+                        else Nothing
+    in
+        case closestMove of
+            Just pos -> Just $ map (\x -> if snd x == WhiteRook then (pos, snd x) else x) board
+            Nothing -> Nothing
+
+
+distance :: Position -> Position -> Int
+distance (x1, y1) (x2, y2) = abs (x1 - x2) + abs (y1 - y2)
 
 
 
+-- Check if the black king is in checkmate
+isCheckmated :: Board -> Bool
+isCheckmated board =
+    let whiteRookPos = fst $ head $ filter (\(_, piece) -> piece == WhiteRook) board
+        blackKingPos = fst $ head $ filter (\(_, piece) -> piece == BlackKing) board
+        bx = fst blackKingPos
+        by = snd blackKingPos
+        -- Check if the black king is in check
+        blackKingInCheck = blackKingPos `elem` validRookMoves board whiteRookPos
+        -- Check if the black king has any legal moves
+        blackKingLegalMoves = filter (isLegalMove board) [(bx + x, by + y) | x <- [-1..1], y <- [-1..1]]
+    in blackKingInCheck && null blackKingLegalMoves
 
+-- Check if a move for the black king is legal
+isLegalMove :: Board -> (Int, Int) -> Bool
+isLegalMove board movePos =
+    let isInsideBoard (x, y) = x >= 1 && x <= 8 && y >= 1 && y <= 8
+        validMove = isInsideBoard movePos
+        -- Check if the move would put the black king in check
+        newBoard = map (\x -> if snd x == BlackKing then (movePos, snd x) else x) board
+    in validMove && not (blackKingInCheck newBoard)
 
+-- Helper function to check if the black king is in check
+blackKingInCheck :: Board -> Bool
+blackKingInCheck board  =
+    let whiteRookPos = fst $ head $ filter (\(_, piece) -> piece == WhiteRook) board
+        blackKingPos = fst $ head $ filter (\(_, piece) -> piece == BlackKing) board
+        whiteKingPos = fst $ head $ filter (\(_, piece) -> piece == WhiteKing) board
 
-
-
+    in blackKingPos `elem` squaresAttackedByWhite whiteKingPos whiteRookPos board
 
 
 
@@ -208,180 +439,31 @@ main = do
     whiteRookPos <- readLn
 
     let board = [(whiteRookPos,WhiteRook), (whiteKingPos,WhiteKing), (blackKingPos,BlackKing)]
-
-    putStr $ printBoard board
-
-    gameLoop board
-
-
-
-
-
-
+    if isValidBoard board then do
+        putStr $ printBoard board
+        if isCheckmated board then
+            putStrLn "Checkmate!"
+        else
+            gameLoop board
+    else
+        putStrLn "Invalid board!"
 
 
 
-{--
-computerMove :: Board -> Board
-computerMove board =
-    let blackKingPos = fst $ head $ filter (\(_, piece) -> piece == BlackKing) board
-        whiteKingPos = fst $ head $ filter (\(_, piece) -> piece == WhiteKing) board
-        rookPos = fst $ head $ filter (\(_, piece) -> piece == WhiteRook) board
-        
-        -- Move the rook and white king
-        newRookPos = moveRook rookPos blackKingPos
-        newWhiteKingPos = moveWhiteKing whiteKingPos blackKingPos
-
-        -- Update the board with the new positions
-        newBoard = map (\(pos, piece) ->
-                        if piece == WhiteRook then (newRookPos, WhiteRook)
-                        else if piece == WhiteKing then (newWhiteKingPos, WhiteKing)
-                        else (pos, piece)) board
-    in newBoard
-
--- Move rook to control the file or rank
-moveRook :: (Int, Int) -> (Int, Int) -> (Int, Int)
-moveRook (rx, ry) (bx, by)
-    -- If rook isn't aligned, move closer to the black king
-    | rx /= bx = (bx, ry)  -- Align rook horizontally
-    | otherwise = (rx, by) -- Align rook vertically
-
--- Move the white king closer to the black king
-moveWhiteKing :: (Int, Int) -> (Int, Int) -> (Int, Int)
-moveWhiteKing (wx, wy) (bx, by)
-    | wx < bx = (wx + 1, wy)  -- Move white king down
-    | wx > bx = (wx - 1, wy)  -- Move white king up
-    | wy < by = (wx, wy + 1)  -- Move white king right
-    | wy > by = (wx, wy - 1)  -- Move white king left
-    | otherwise = (wx, wy)    -- Already close, stay put--}
-
-squaresAttackedByBlack :: Position -> Board -> [Position]
-squaresAttackedByBlack blackKingPos board = validKingMoves blackKingPos
-
-
-isRookBetweenKings :: Position -> Position -> Position -> Maybe Orientation
-isRookBetweenKings (x1, y1) (x2, y2) (xr, yr)
-  | between y1 y2 yr = Just Vertical
-  | between x1 x2 xr = Just Horizontal
-  | otherwise = Nothing
+isValidBoard :: Board -> Bool
+isValidBoard board = 
+    all (\(pos, piece) -> isValidSquare pos) board &&
+    arePositionsUnique (map fst board) && not (areKingsAdjacent whiteKingPos blackKingPos)
   where
-    between a b c = (a < c && c < b) || (b < c && c < a)
+    blackKingPos = fst $ head $ filter (\(_, piece) -> piece == BlackKing) board
+    whiteKingPos = fst $ head $ filter (\(_, piece) -> piece == WhiteKing) board
 
+arePositionsUnique :: [Position] -> Bool
+arePositionsUnique positions = length positions == length (removeDuplicates positions)
+  where
+    removeDuplicates :: Eq a => [a] -> [a]
+    removeDuplicates [] = []
+    removeDuplicates (x:xs) = x : removeDuplicates (filter (/= x) xs)
 
-
--- Main function to determine the computer's move
-
-computerMove :: Board -> Board
-computerMove board =
-    let
-        whiteRookPos = fst $ head $ filter (\(_, piece) -> piece == WhiteRook) board
-        blackKingPos = fst $ head $ filter (\(_, piece) -> piece == BlackKing) board
-        whiteKingPos = fst $ head $ filter (\(_, piece) -> piece == WhiteKing) board
-
-        rookBetweenKings = isRookBetweenKings blackKingPos whiteKingPos whiteRookPos
-
-        tryBetween = tryToMoveRookBetweenKings board blackKingPos whiteKingPos whiteRookPos
-
-
-
-    in 
-        case rookBetweenKings of
-            Just dir -> undefined
-                
-            Nothing -> 
-                case tryBetween of
-                    Just newBoard -> newBoard
-                    Nothing -> undefined
-        
-
-tryToMoveRookBetweenKings :: Board -> Position -> Position -> Position -> Maybe Board
-tryToMoveRookBetweenKings board blackKingPos whiteKingPos rookPos =
-    let
-        attackedSquares = squaresAttackedByBlack blackKingPos board
-        possibleMoves = validRookMoves board rookPos
-        movesBetween = filter (\move ->
-            case isRookBetweenKings blackKingPos whiteKingPos move of
-                Nothing -> False
-                Just _ -> True) possibleMoves
-        safeMoves = filter (`notElem` attackedSquares) movesBetween
-        closestMove = if not (null safeMoves)
-                        then Just $ minimumBy (comparing $ distance blackKingPos) safeMoves
-                        else Nothing
-    in 
-        case closestMove of
-            Just pos -> Just $ map (\x -> if snd x == WhiteRook then (pos, snd x) else x) board
-            Nothing -> Nothing
-
-
-distance :: Position -> Position -> Int
-distance (x1, y1) (x2, y2) = abs (x1 - x2) + abs (y1 - y2)
-
-
-testBoard :: Board
-testBoard = [((3,3), BlackKing),((4,3), WhiteKing),((1,1), WhiteRook)]
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
--- Check if the black king is in checkmate
-isCheckmated :: Board -> Bool
-isCheckmated board =
-    let whiteRookPos = fst $ head $ filter (\(_, piece) -> piece == WhiteRook) board
-        blackKingPos = fst $ head $ filter (\(_, piece) -> piece == BlackKing) board
-        bx = fst blackKingPos
-        by = snd blackKingPos
-        -- Check if the black king is in check
-        blackKingInCheck = blackKingPos `elem` validRookMoves board whiteRookPos
-        -- Check if the black king has any legal moves
-        blackKingLegalMoves = filter (isLegalMove board) [(bx + x, by + y) | x <- [-1..1], y <- [-1..1]]
-    in blackKingInCheck && null blackKingLegalMoves
-
--- Check if a move for the black king is legal
-isLegalMove :: Board -> (Int, Int) -> Bool
-isLegalMove board movePos =
-    let isInsideBoard (x, y) = x >= 1 && x <= 8 && y >= 1 && y <= 8
-        validMove = isInsideBoard movePos
-        -- Check if the move would put the black king in check
-        newBoard = map (\x -> if snd x == BlackKing then (movePos, snd x) else x) board
-    in validMove && not (blackKingInCheck newBoard)
-
--- Helper function to check if the black king is in check
-blackKingInCheck :: Board -> Bool
-blackKingInCheck board  =
-    let whiteRookPos = fst $ head $ filter (\(_, piece) -> piece == WhiteRook) board
-        blackKingPos = fst $ head $ filter (\(_, piece) -> piece == BlackKing) board
-        whiteKingPos = fst $ head $ filter (\(_, piece) -> piece == WhiteKing) board
-
-    in blackKingPos `elem` squaresAttackedByWhite whiteKingPos whiteRookPos board
-
+areKingsAdjacent :: Position -> Position -> Bool
+areKingsAdjacent (x1, y1) (x2, y2) = abs (x1 - x2) <= 1 && abs (y1 - y2) <= 1
